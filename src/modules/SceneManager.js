@@ -63,7 +63,8 @@ class SceneManager extends EventEmitter {
     dat.GUIVR.enableMouse( this.camera, this.renderer );
     // console.log(window);
     this.gui = dat.GUIVR.create('status');
-    this.gui.position.set(0, 0, -2);
+    this.gui.position.set(0, 1, -2);
+    this.gui.scale.set(3, 3, 1);
     this.gui.add(this.status, 'num').min(0).max(1000).listen();
     this.gui.add(this.status, 'fps').listen();
 
