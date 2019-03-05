@@ -28,9 +28,8 @@ class BirdManager {
 
   init() {
     setInterval(() => {
-      if (this.agentList.length < 1000) this.addAgent();
+      if (this.agentList.length < 100) this.addAgent();
     }, 1000 / 2);
-
   }
 
   // 更新
