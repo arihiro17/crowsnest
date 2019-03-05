@@ -11,7 +11,7 @@ class BirdModel {
       (resolve, reject) => {
         let loader = new THREE.GLTFLoader();
         loader.load(
-          'model/_bird.glb',
+          './model/bird.glb',
           ( data ) => {
             let gltf = data;
             this.model = gltf.scene;
