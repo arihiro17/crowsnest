@@ -13,8 +13,8 @@
 `npm run start`  
 `http://localhost:8888/`でプレビュー
 
-## デプロイ
+## 公開
 
-`npm run build`  
-`dist`フォルダに、リリースファイルが出力される
-
+`npm run deploy`
+`dist`フォルダが`master`ブランチにマージされ
+`https://arihiro17.github.io/crowsnest/` に公開される
