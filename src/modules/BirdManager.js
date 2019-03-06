@@ -29,7 +29,7 @@ class BirdManager {
   init() {
     setInterval(() => {
       // FPS60以上ならエージェント追加
-      if (SceneManager.state.fps >= 60) {
+      if (SceneManager.status.fps >= 60) {
         this.addAgent()
       }
     }, 1000);
