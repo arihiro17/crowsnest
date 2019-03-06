@@ -23260,6 +23260,515 @@ function LensFlare(){console.error('THREE.LensFlare has been moved to /examples/
 
 /***/ }),
 
+/***/ "./node_modules/three/examples/js/loaders/DRACOLoader.js":
+/*!***************************************************************!*\
+  !*** ./node_modules/three/examples/js/loaders/DRACOLoader.js ***!
+  \***************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/* WEBPACK VAR INJECTION */(function(THREE) {// Copyright 2016 The Draco Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+/**
+ * @param {THREE.LoadingManager} manager
+ */
+
+function _typeof(obj) { if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
+
+THREE.DRACOLoader = function (manager) {
+  this.timeLoaded = 0;
+  this.manager = manager || THREE.DefaultLoadingManager;
+  this.materials = null;
+  this.verbosity = 0;
+  this.attributeOptions = {};
+  this.drawMode = THREE.TrianglesDrawMode; // Native Draco attribute type to Three.JS attribute type.
+
+  this.nativeAttributeMap = {
+    'position': 'POSITION',
+    'normal': 'NORMAL',
+    'color': 'COLOR',
+    'uv': 'TEX_COORD'
+  };
+};
+
+THREE.DRACOLoader.prototype = {
+  constructor: THREE.DRACOLoader,
+  load: function load(url, onLoad, onProgress, onError) {
+    var scope = this;
+    var loader = new THREE.FileLoader(scope.manager);
+    loader.setPath(this.path);
+    loader.setResponseType('arraybuffer');
+    loader.load(url, function (blob) {
+      scope.decodeDracoFile(blob, onLoad);
+    }, onProgress, onError);
+  },
+  setPath: function setPath(value) {
+    this.path = value;
+    return this;
+  },
+  setVerbosity: function setVerbosity(level) {
+    this.verbosity = level;
+    return this;
+  },
+
+  /**
+   *  Sets desired mode for generated geometry indices.
+   *  Can be either:
+   *      THREE.TrianglesDrawMode
+   *      THREE.TriangleStripDrawMode
+   */
+  setDrawMode: function setDrawMode(drawMode) {
+    this.drawMode = drawMode;
+    return this;
+  },
+
+  /**
+   * Skips dequantization for a specific attribute.
+   * |attributeName| is the THREE.js name of the given attribute type.
+   * The only currently supported |attributeName| is 'position', more may be
+   * added in future.
+   */
+  setSkipDequantization: function setSkipDequantization(attributeName, skip) {
+    var skipDequantization = true;
+    if (typeof skip !== 'undefined') skipDequantization = skip;
+    this.getAttributeOptions(attributeName).skipDequantization = skipDequantization;
+    return this;
+  },
+
+  /**
+   * Decompresses a Draco buffer. Names of attributes (for ID and type maps)
+   * must be one of the supported three.js types, including: position, color,
+   * normal, uv, uv2, skinIndex, skinWeight.
+   *
+   * @param {ArrayBuffer} rawBuffer
+   * @param {Function} callback
+   * @param {Object|undefined} attributeUniqueIdMap Provides a pre-defined ID
+   *     for each attribute in the geometry to be decoded. If given,
+   *     `attributeTypeMap` is required and `nativeAttributeMap` will be
+   *     ignored.
+   * @param {Object|undefined} attributeTypeMap Provides a predefined data
+   *     type (as a typed array constructor) for each attribute in the
+   *     geometry to be decoded.
+   */
+  decodeDracoFile: function decodeDracoFile(rawBuffer, callback, attributeUniqueIdMap, attributeTypeMap) {
+    var scope = this;
+    THREE.DRACOLoader.getDecoderModule().then(function (module) {
+      scope.decodeDracoFileInternal(rawBuffer, module.decoder, callback, attributeUniqueIdMap, attributeTypeMap);
+    });
+  },
+  decodeDracoFileInternal: function decodeDracoFileInternal(rawBuffer, dracoDecoder, callback, attributeUniqueIdMap, attributeTypeMap) {
+    /*
+     * Here is how to use Draco Javascript decoder and get the geometry.
+     */
+    var buffer = new dracoDecoder.DecoderBuffer();
+    buffer.Init(new Int8Array(rawBuffer), rawBuffer.byteLength);
+    var decoder = new dracoDecoder.Decoder();
+    /*
+     * Determine what type is this file: mesh or point cloud.
+     */
+
+    var geometryType = decoder.GetEncodedGeometryType(buffer);
+
+    if (geometryType == dracoDecoder.TRIANGULAR_MESH) {
+      if (this.verbosity > 0) {
+        console.log('Loaded a mesh.');
+      }
+    } else if (geometryType == dracoDecoder.POINT_CLOUD) {
+      if (this.verbosity > 0) {
+        console.log('Loaded a point cloud.');
+      }
+    } else {
+      var errorMsg = 'THREE.DRACOLoader: Unknown geometry type.';
+      console.error(errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    callback(this.convertDracoGeometryTo3JS(dracoDecoder, decoder, geometryType, buffer, attributeUniqueIdMap, attributeTypeMap));
+  },
+  addAttributeToGeometry: function addAttributeToGeometry(dracoDecoder, decoder, dracoGeometry, attributeName, attributeType, attribute, geometry, geometryBuffer) {
+    if (attribute.ptr === 0) {
+      var errorMsg = 'THREE.DRACOLoader: No attribute ' + attributeName;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    var numComponents = attribute.num_components();
+    var numPoints = dracoGeometry.num_points();
+    var numValues = numPoints * numComponents;
+    var attributeData;
+    var TypedBufferAttribute;
+
+    switch (attributeType) {
+      case Float32Array:
+        attributeData = new dracoDecoder.DracoFloat32Array();
+        decoder.GetAttributeFloatForAllPoints(dracoGeometry, attribute, attributeData);
+        geometryBuffer[attributeName] = new Float32Array(numValues);
+        TypedBufferAttribute = THREE.Float32BufferAttribute;
+        break;
+
+      case Int8Array:
+        attributeData = new dracoDecoder.DracoInt8Array();
+        decoder.GetAttributeInt8ForAllPoints(dracoGeometry, attribute, attributeData);
+        geometryBuffer[attributeName] = new Int8Array(numValues);
+        TypedBufferAttribute = THREE.Int8BufferAttribute;
+        break;
+
+      case Int16Array:
+        attributeData = new dracoDecoder.DracoInt16Array();
+        decoder.GetAttributeInt16ForAllPoints(dracoGeometry, attribute, attributeData);
+        geometryBuffer[attributeName] = new Int16Array(numValues);
+        TypedBufferAttribute = THREE.Int16BufferAttribute;
+        break;
+
+      case Int32Array:
+        attributeData = new dracoDecoder.DracoInt32Array();
+        decoder.GetAttributeInt32ForAllPoints(dracoGeometry, attribute, attributeData);
+        geometryBuffer[attributeName] = new Int32Array(numValues);
+        TypedBufferAttribute = THREE.Int32BufferAttribute;
+        break;
+
+      case Uint8Array:
+        attributeData = new dracoDecoder.DracoUInt8Array();
+        decoder.GetAttributeUInt8ForAllPoints(dracoGeometry, attribute, attributeData);
+        geometryBuffer[attributeName] = new Uint8Array(numValues);
+        TypedBufferAttribute = THREE.Uint8BufferAttribute;
+        break;
+
+      case Uint16Array:
+        attributeData = new dracoDecoder.DracoUInt16Array();
+        decoder.GetAttributeUInt16ForAllPoints(dracoGeometry, attribute, attributeData);
+        geometryBuffer[attributeName] = new Uint16Array(numValues);
+        TypedBufferAttribute = THREE.Uint16BufferAttribute;
+        break;
+
+      case Uint32Array:
+        attributeData = new dracoDecoder.DracoUInt32Array();
+        decoder.GetAttributeUInt32ForAllPoints(dracoGeometry, attribute, attributeData);
+        geometryBuffer[attributeName] = new Uint32Array(numValues);
+        TypedBufferAttribute = THREE.Uint32BufferAttribute;
+        break;
+
+      default:
+        var errorMsg = 'THREE.DRACOLoader: Unexpected attribute type.';
+        console.error(errorMsg);
+        throw new Error(errorMsg);
+    } // Copy data from decoder.
+
+
+    for (var i = 0; i < numValues; i++) {
+      geometryBuffer[attributeName][i] = attributeData.GetValue(i);
+    } // Add attribute to THREEJS geometry for rendering.
+
+
+    geometry.addAttribute(attributeName, new TypedBufferAttribute(geometryBuffer[attributeName], numComponents));
+    dracoDecoder.destroy(attributeData);
+  },
+  convertDracoGeometryTo3JS: function convertDracoGeometryTo3JS(dracoDecoder, decoder, geometryType, buffer, attributeUniqueIdMap, attributeTypeMap) {
+    // TODO: Should not assume native Draco attribute IDs apply.
+    if (this.getAttributeOptions('position').skipDequantization === true) {
+      decoder.SkipAttributeTransform(dracoDecoder.POSITION);
+    }
+
+    var dracoGeometry;
+    var decodingStatus;
+    var start_time = performance.now();
+
+    if (geometryType === dracoDecoder.TRIANGULAR_MESH) {
+      dracoGeometry = new dracoDecoder.Mesh();
+      decodingStatus = decoder.DecodeBufferToMesh(buffer, dracoGeometry);
+    } else {
+      dracoGeometry = new dracoDecoder.PointCloud();
+      decodingStatus = decoder.DecodeBufferToPointCloud(buffer, dracoGeometry);
+    }
+
+    if (!decodingStatus.ok() || dracoGeometry.ptr == 0) {
+      var errorMsg = 'THREE.DRACOLoader: Decoding failed: ';
+      errorMsg += decodingStatus.error_msg();
+      console.error(errorMsg);
+      dracoDecoder.destroy(decoder);
+      dracoDecoder.destroy(dracoGeometry);
+      throw new Error(errorMsg);
+    }
+
+    var decode_end = performance.now();
+    dracoDecoder.destroy(buffer);
+    /*
+     * Example on how to retrieve mesh and attributes.
+     */
+
+    var numFaces;
+
+    if (geometryType == dracoDecoder.TRIANGULAR_MESH) {
+      numFaces = dracoGeometry.num_faces();
+
+      if (this.verbosity > 0) {
+        console.log('Number of faces loaded: ' + numFaces.toString());
+      }
+    } else {
+      numFaces = 0;
+    }
+
+    var numPoints = dracoGeometry.num_points();
+    var numAttributes = dracoGeometry.num_attributes();
+
+    if (this.verbosity > 0) {
+      console.log('Number of points loaded: ' + numPoints.toString());
+      console.log('Number of attributes loaded: ' + numAttributes.toString());
+    } // Verify if there is position attribute.
+    // TODO: Should not assume native Draco attribute IDs apply.
+
+
+    var posAttId = decoder.GetAttributeId(dracoGeometry, dracoDecoder.POSITION);
+
+    if (posAttId == -1) {
+      var errorMsg = 'THREE.DRACOLoader: No position attribute found.';
+      console.error(errorMsg);
+      dracoDecoder.destroy(decoder);
+      dracoDecoder.destroy(dracoGeometry);
+      throw new Error(errorMsg);
+    }
+
+    var posAttribute = decoder.GetAttribute(dracoGeometry, posAttId); // Structure for converting to THREEJS geometry later.
+
+    var geometryBuffer = {}; // Import data to Three JS geometry.
+
+    var geometry = new THREE.BufferGeometry(); // Do not use both the native attribute map and a provided (e.g. glTF) map.
+
+    if (attributeUniqueIdMap) {
+      // Add attributes of user specified unique id. E.g. GLTF models.
+      for (var attributeName in attributeUniqueIdMap) {
+        var attributeType = attributeTypeMap[attributeName];
+        var attributeId = attributeUniqueIdMap[attributeName];
+        var attribute = decoder.GetAttributeByUniqueId(dracoGeometry, attributeId);
+        this.addAttributeToGeometry(dracoDecoder, decoder, dracoGeometry, attributeName, attributeType, attribute, geometry, geometryBuffer);
+      }
+    } else {
+      // Add native Draco attribute type to geometry.
+      for (var attributeName in this.nativeAttributeMap) {
+        var attId = decoder.GetAttributeId(dracoGeometry, dracoDecoder[this.nativeAttributeMap[attributeName]]);
+
+        if (attId !== -1) {
+          if (this.verbosity > 0) {
+            console.log('Loaded ' + attributeName + ' attribute.');
+          }
+
+          var attribute = decoder.GetAttribute(dracoGeometry, attId);
+          this.addAttributeToGeometry(dracoDecoder, decoder, dracoGeometry, attributeName, Float32Array, attribute, geometry, geometryBuffer);
+        }
+      }
+    } // For mesh, we need to generate the faces.
+
+
+    if (geometryType == dracoDecoder.TRIANGULAR_MESH) {
+      if (this.drawMode === THREE.TriangleStripDrawMode) {
+        var stripsArray = new dracoDecoder.DracoInt32Array();
+        var numStrips = decoder.GetTriangleStripsFromMesh(dracoGeometry, stripsArray);
+        geometryBuffer.indices = new Uint32Array(stripsArray.size());
+
+        for (var i = 0; i < stripsArray.size(); ++i) {
+          geometryBuffer.indices[i] = stripsArray.GetValue(i);
+        }
+
+        dracoDecoder.destroy(stripsArray);
+      } else {
+        var numIndices = numFaces * 3;
+        geometryBuffer.indices = new Uint32Array(numIndices);
+        var ia = new dracoDecoder.DracoInt32Array();
+
+        for (var i = 0; i < numFaces; ++i) {
+          decoder.GetFaceFromMesh(dracoGeometry, i, ia);
+          var index = i * 3;
+          geometryBuffer.indices[index] = ia.GetValue(0);
+          geometryBuffer.indices[index + 1] = ia.GetValue(1);
+          geometryBuffer.indices[index + 2] = ia.GetValue(2);
+        }
+
+        dracoDecoder.destroy(ia);
+      }
+    }
+
+    geometry.drawMode = this.drawMode;
+
+    if (geometryType == dracoDecoder.TRIANGULAR_MESH) {
+      geometry.setIndex(new (geometryBuffer.indices.length > 65535 ? THREE.Uint32BufferAttribute : THREE.Uint16BufferAttribute)(geometryBuffer.indices, 1));
+    } // TODO: Should not assume native Draco attribute IDs apply.
+    // TODO: Can other attribute types be quantized?
+
+
+    var posTransform = new dracoDecoder.AttributeQuantizationTransform();
+
+    if (posTransform.InitFromAttribute(posAttribute)) {
+      // Quantized attribute. Store the quantization parameters into the
+      // THREE.js attribute.
+      geometry.attributes['position'].isQuantized = true;
+      geometry.attributes['position'].maxRange = posTransform.range();
+      geometry.attributes['position'].numQuantizationBits = posTransform.quantization_bits();
+      geometry.attributes['position'].minValues = new Float32Array(3);
+
+      for (var i = 0; i < 3; ++i) {
+        geometry.attributes['position'].minValues[i] = posTransform.min_value(i);
+      }
+    }
+
+    dracoDecoder.destroy(posTransform);
+    dracoDecoder.destroy(decoder);
+    dracoDecoder.destroy(dracoGeometry);
+    this.decode_time = decode_end - start_time;
+    this.import_time = performance.now() - decode_end;
+
+    if (this.verbosity > 0) {
+      console.log('Decode time: ' + this.decode_time);
+      console.log('Import time: ' + this.import_time);
+    }
+
+    return geometry;
+  },
+  isVersionSupported: function isVersionSupported(version, callback) {
+    THREE.DRACOLoader.getDecoderModule().then(function (module) {
+      callback(module.decoder.isVersionSupported(version));
+    });
+  },
+  getAttributeOptions: function getAttributeOptions(attributeName) {
+    if (typeof this.attributeOptions[attributeName] === 'undefined') this.attributeOptions[attributeName] = {};
+    return this.attributeOptions[attributeName];
+  }
+};
+THREE.DRACOLoader.decoderPath = './';
+THREE.DRACOLoader.decoderConfig = {};
+THREE.DRACOLoader.decoderModulePromise = null;
+/**
+ * Sets the base path for decoder source files.
+ * @param {string} path
+ */
+
+THREE.DRACOLoader.setDecoderPath = function (path) {
+  THREE.DRACOLoader.decoderPath = path;
+};
+/**
+ * Sets decoder configuration and releases singleton decoder module. Module
+ * will be recreated with the next decoding call.
+ * @param {Object} config
+ */
+
+
+THREE.DRACOLoader.setDecoderConfig = function (config) {
+  var wasmBinary = THREE.DRACOLoader.decoderConfig.wasmBinary;
+  THREE.DRACOLoader.decoderConfig = config || {};
+  THREE.DRACOLoader.releaseDecoderModule(); // Reuse WASM binary.
+
+  if (wasmBinary) THREE.DRACOLoader.decoderConfig.wasmBinary = wasmBinary;
+};
+/**
+ * Releases the singleton DracoDecoderModule instance. Module will be recreated
+ * with the next decoding call.
+ */
+
+
+THREE.DRACOLoader.releaseDecoderModule = function () {
+  THREE.DRACOLoader.decoderModulePromise = null;
+};
+/**
+ * Gets WebAssembly or asm.js singleton instance of DracoDecoderModule
+ * after testing for browser support. Returns Promise that resolves when
+ * module is available.
+ * @return {Promise<{decoder: DracoDecoderModule}>}
+ */
+
+
+THREE.DRACOLoader.getDecoderModule = function () {
+  var scope = this;
+  var path = THREE.DRACOLoader.decoderPath;
+  var config = THREE.DRACOLoader.decoderConfig;
+  var promise = THREE.DRACOLoader.decoderModulePromise;
+  if (promise) return promise; // Load source files.
+
+  if (typeof DracoDecoderModule !== 'undefined') {
+    // Loaded externally.
+    promise = Promise.resolve();
+  } else if ((typeof WebAssembly === "undefined" ? "undefined" : _typeof(WebAssembly)) !== 'object' || config.type === 'js') {
+    // Load with asm.js.
+    promise = THREE.DRACOLoader._loadScript(path + 'draco_decoder.js');
+  } else {
+    // Load with WebAssembly.
+    config.wasmBinaryFile = path + 'draco_decoder.wasm';
+    promise = THREE.DRACOLoader._loadScript(path + 'draco_wasm_wrapper.js').then(function () {
+      return THREE.DRACOLoader._loadArrayBuffer(config.wasmBinaryFile);
+    }).then(function (wasmBinary) {
+      config.wasmBinary = wasmBinary;
+    });
+  } // Wait for source files, then create and return a decoder.
+
+
+  promise = promise.then(function () {
+    return new Promise(function (resolve) {
+      config.onModuleLoaded = function (decoder) {
+        scope.timeLoaded = performance.now(); // Module is Promise-like. Wrap before resolving to avoid loop.
+
+        resolve({
+          decoder: decoder
+        });
+      };
+
+      DracoDecoderModule(config);
+    });
+  });
+  THREE.DRACOLoader.decoderModulePromise = promise;
+  return promise;
+};
+/**
+ * @param {string} src
+ * @return {Promise}
+ */
+
+
+THREE.DRACOLoader._loadScript = function (src) {
+  var prevScript = document.getElementById('decoder_script');
+
+  if (prevScript !== null) {
+    prevScript.parentNode.removeChild(prevScript);
+  }
+
+  var head = document.getElementsByTagName('head')[0];
+  var script = document.createElement('script');
+  script.id = 'decoder_script';
+  script.type = 'text/javascript';
+  script.src = src;
+  return new Promise(function (resolve) {
+    script.onload = resolve;
+    head.appendChild(script);
+  });
+};
+/**
+ * @param {string} src
+ * @return {Promise}
+ */
+
+
+THREE.DRACOLoader._loadArrayBuffer = function (src) {
+  var loader = new THREE.FileLoader();
+  loader.setResponseType('arraybuffer');
+  return new Promise(function (resolve, reject) {
+    loader.load(src, resolve, undefined, reject);
+  });
+};
+/* WEBPACK VAR INJECTION */}.call(this, __webpack_require__(/*! three */ "./node_modules/three/build/three.module.js")))
+
+/***/ }),
+
 /***/ "./node_modules/three/examples/js/loaders/GLTFLoader.js":
 /*!**************************************************************!*\
   !*** ./node_modules/three/examples/js/loaders/GLTFLoader.js ***!
@@ -30941,16 +31450,15 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var stats_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! stats-js */ "./node_modules/stats-js/build/stats.min.js");
 /* harmony import */ var stats_js__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(stats_js__WEBPACK_IMPORTED_MODULE_2__);
 /* harmony import */ var _modules_SceneManager__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./modules/SceneManager */ "./src/modules/SceneManager.js");
-/* harmony import */ var _modules_BirdModel__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./modules/BirdModel */ "./src/modules/BirdModel.js");
-/* harmony import */ var _modules_BirdManager__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./modules/BirdManager */ "./src/modules/BirdManager.js");
-/* harmony import */ var _modules_Skybox__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./modules/Skybox */ "./src/modules/Skybox.js");
-/* harmony import */ var _modules_GuiControll__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./modules/GuiControll */ "./src/modules/GuiControll.js");
+/* harmony import */ var _modules_BirdManager__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./modules/BirdManager */ "./src/modules/BirdManager.js");
+/* harmony import */ var _modules_Skybox__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./modules/Skybox */ "./src/modules/Skybox.js");
+/* harmony import */ var _modules_GuiControll__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./modules/GuiControll */ "./src/modules/GuiControll.js");
  // import GLTFLoader from 'three-gltf-loader';
 // import WEBVR from './modules/WebVR';
 
 
 
-
+ // import BirdModel from './modules/BirdModel';
 
 
 
@@ -30959,11 +31467,20 @@ var polyfill;
 document.addEventListener("DOMContentLoaded", function () {
   polyfill = new webvr_polyfill__WEBPACK_IMPORTED_MODULE_1___default.a();
   _modules_SceneManager__WEBPACK_IMPORTED_MODULE_3__["default"].init();
-  _modules_BirdModel__WEBPACK_IMPORTED_MODULE_4__["default"].load().then(function () {
-    var skybox = new _modules_Skybox__WEBPACK_IMPORTED_MODULE_6__["default"](["img/skybox/Left_Tex.png", "img/skybox/Right_Tex.png", "img/skybox/Up_Tex.png", "img/skybox/Down_Tex.png", "img/skybox/Front_Tex.png", "img/skybox/Back_Tex.png"]);
-    skybox.show();
-    _modules_BirdManager__WEBPACK_IMPORTED_MODULE_5__["birdManager"].init();
-  });
+  var skybox = new _modules_Skybox__WEBPACK_IMPORTED_MODULE_5__["default"](["img/skybox/Left_Tex.png", "img/skybox/Right_Tex.png", "img/skybox/Up_Tex.png", "img/skybox/Down_Tex.png", "img/skybox/Front_Tex.png", "img/skybox/Back_Tex.png"]);
+  skybox.show();
+  _modules_BirdManager__WEBPACK_IMPORTED_MODULE_4__["birdManager"].init(); // BirdModel.load().then( () =>{
+  //   let skybox = new Skybox([
+  //     "img/skybox/Left_Tex.png",
+  //     "img/skybox/Right_Tex.png",
+  //     "img/skybox/Up_Tex.png",
+  //     "img/skybox/Down_Tex.png",
+  //     "img/skybox/Front_Tex.png",
+  //     "img/skybox/Back_Tex.png"
+  //   ]);
+  //   skybox.show();
+  //   birdManager.init();
+  // } );
 });
 
 /***/ }),
@@ -31045,8 +31562,8 @@ var RULE_COHESION_FACTOR = 0.5; // 単一のAgent
 
 var BirdAgent =
 /*#__PURE__*/
-function (_AgentAbstruct) {
-  _inherits(BirdAgent, _AgentAbstruct);
+function (_AgentObject) {
+  _inherits(BirdAgent, _AgentObject);
 
   function BirdAgent() {
     var _this;
@@ -31056,7 +31573,9 @@ function (_AgentAbstruct) {
     // 位置をランダムで決める
     _this = _possibleConstructorReturn(this, _getPrototypeOf(BirdAgent).call(this, new three__WEBPACK_IMPORTED_MODULE_0__["Vector3"](Object(_Util__WEBPACK_IMPORTED_MODULE_3__["randomRange"])(_Define__WEBPACK_IMPORTED_MODULE_2__["AREA_RANGE"].MIN_X, _Define__WEBPACK_IMPORTED_MODULE_2__["AREA_RANGE"].MAX_X), Object(_Util__WEBPACK_IMPORTED_MODULE_3__["randomRange"])(_Define__WEBPACK_IMPORTED_MODULE_2__["AREA_RANGE"].MIN_Y, _Define__WEBPACK_IMPORTED_MODULE_2__["AREA_RANGE"].MAX_Y), Object(_Util__WEBPACK_IMPORTED_MODULE_3__["randomRange"])(_Define__WEBPACK_IMPORTED_MODULE_2__["AREA_RANGE"].MIN_Z, _Define__WEBPACK_IMPORTED_MODULE_2__["AREA_RANGE"].MAX_Z))));
     _this.model = null;
-    _this.mixer = null; // 加速度
+    _this.mixer = null;
+    _this.clip = null;
+    _this.setupComplete = false; // 加速度
 
     _this.acceleration = new three__WEBPACK_IMPORTED_MODULE_0__["Vector3"](0, 0, 0); // 速度
 
@@ -31068,70 +31587,89 @@ function (_AgentAbstruct) {
   _createClass(BirdAgent, [{
     key: "setup",
     value: function setup() {
-      var birdModel = _BirdModel__WEBPACK_IMPORTED_MODULE_6__["default"].getModel();
-      birdModel.rotation.set(0, Math.PI / 2, 0);
-      birdModel.scale.set(0.08, 0.08, 0.08);
-      this.model = new three__WEBPACK_IMPORTED_MODULE_0__["Object3D"]();
-      this.model.add(birdModel); // this.animation = BirdModel.getAnimation();
-      // if (this.animation && this.animations.length) {
-      //   let mixer = new THREE.AnimationMixer(birdModel);
-      //   for (let cnt = 0; cnt < this.animations.length; cnt++) {
-      //     let animation = this.animations[cnt];
-      //     let action = mixer.clipAction(animation);
-      //
-      //     if (state.playAnimation) action.play();
-      //   }
-      // }
-      // if (this.animation && this.animation.length) {
-      //   const meshes = this.getMesh(birdModel);
-      //   this.mixer = new THREE.AnimationMixer(birdModel);
-      //   for (let cnt = 0; cnt < this.animation.length; cnt++) {
-      //     this.mixer.clipAction( this.animation[cnt] ).play();
-      //   }
-      // }
+      var _this2 = this;
 
-      _SceneManager__WEBPACK_IMPORTED_MODULE_4__["default"].addScene(this.model);
+      // const birdModel = BirdModel.getModel();
+      var birdloader = new _BirdModel__WEBPACK_IMPORTED_MODULE_6__["default"]();
+      birdloader.load().then(function () {
+        var birdModel = birdloader.getModel();
+        birdModel.rotation.set(0, Math.PI / 2, 0);
+        birdModel.scale.set(0.08, 0.08, 0.08);
+        _this2.model = new three__WEBPACK_IMPORTED_MODULE_0__["Object3D"]();
 
-      this._updatePosRot();
+        _this2.model.add(birdModel);
 
-      this.clock = new three__WEBPACK_IMPORTED_MODULE_0__["Clock"]();
-      _SceneManager__WEBPACK_IMPORTED_MODULE_4__["default"].on('update', this.onUpdate);
+        _this2.mixer = new three__WEBPACK_IMPORTED_MODULE_0__["AnimationMixer"](birdModel); // let clip = BirdModel.getAnimation();
+
+        var clip = birdloader.getAnimation();
+
+        var action = _this2.mixer.clipAction(clip);
+
+        action.play();
+
+        if (_this2.mixer) {
+          _this2.mixer.stopAllAction();
+
+          _this2.mixer.uncacheRoot(_this2.mixer.getRoot());
+
+          _this2.mixer = null;
+        }
+
+        if (clip) {
+          if (clip.validate()) clip.optimize();
+          _this2.clip = clip;
+          _this2.mixer = new three__WEBPACK_IMPORTED_MODULE_0__["AnimationMixer"](birdModel);
+
+          _this2.mixer.clipAction(clip).play();
+        }
+
+        _SceneManager__WEBPACK_IMPORTED_MODULE_4__["default"].addScene(_this2.model);
+
+        _this2._updatePosRot();
+
+        _this2.clock = new three__WEBPACK_IMPORTED_MODULE_0__["Clock"](); // this.setupComplete = true;
+
+        _SceneManager__WEBPACK_IMPORTED_MODULE_4__["default"].on('update', _this2.onUpdate);
+      }, null);
     } // 更新
 
   }, {
     key: "update",
     value: function update() {
-      var _this2 = this;
+      var _this3 = this;
 
       return function () {
         // let time = Date.now();
         // let dt = (time - this.time) / 1000;
-        var dt = _this2.clock.getDelta(); // this.time = time;
+        var dt = _this3.clock.getDelta(); // this.time = time;
+        // if (!this.setupComplete) return;
 
 
-        var dPos = _this2.velocity.clone().multiplyScalar(dt).add(_this2.acceleration.clone().multiplyScalar(dt * dt * 0.5));
+        var dPos = _this3.velocity.clone().multiplyScalar(dt).add(_this3.acceleration.clone().multiplyScalar(dt * dt * 0.5));
 
-        _this2.velocity.add(_this2.acceleration.clone().multiplyScalar(dt)); // // 速度BoidMinV以上BoidMaxV以下でなければならない
+        _this3.velocity.add(_this3.acceleration.clone().multiplyScalar(dt)); // // 速度BoidMinV以上BoidMaxV以下でなければならない
 
 
-        _this2.velocity.clampLength(_Define__WEBPACK_IMPORTED_MODULE_2__["BOID_SPEED"].MIN_V, _Define__WEBPACK_IMPORTED_MODULE_2__["BOID_SPEED"].MAX_V);
+        _this3.velocity.clampLength(_Define__WEBPACK_IMPORTED_MODULE_2__["BOID_SPEED"].MIN_V, _Define__WEBPACK_IMPORTED_MODULE_2__["BOID_SPEED"].MAX_V);
 
-        _this2.position.add(dPos); // // 加速度構成
+        _this3.position.add(dPos); // // 加速度構成
 
 
         var accel = new three__WEBPACK_IMPORTED_MODULE_0__["Vector3"](0, 0, 0);
-        accel.add(_this2._ruleSeparation().multiplyScalar(RULE_SEPARATION_FACTOR));
-        accel.add(_this2._ruleAlignment().multiplyScalar(RULE_ALIGNMENT_FACTOR));
-        accel.add(_this2._ruleCohesion().multiplyScalar(RULE_COHESION_FACTOR));
-        _this2.acceleration = accel.divideScalar(RULE_SEPARATION_FACTOR + RULE_ALIGNMENT_FACTOR + RULE_COHESION_FACTOR);
+        accel.add(_this3._ruleSeparation().multiplyScalar(RULE_SEPARATION_FACTOR));
+        accel.add(_this3._ruleAlignment().multiplyScalar(RULE_ALIGNMENT_FACTOR));
+        accel.add(_this3._ruleCohesion().multiplyScalar(RULE_COHESION_FACTOR));
+        _this3.acceleration = accel.divideScalar(RULE_SEPARATION_FACTOR + RULE_ALIGNMENT_FACTOR + RULE_COHESION_FACTOR);
 
-        _this2._updatePosRot(); // this.mixer.update(dt);
+        _this3._updatePosRot();
 
+        _this3.mixer && _this3.mixer.update(dt);
       };
     }
   }, {
     key: "_updatePosRot",
     value: function _updatePosRot() {
+      console.log(this.model);
       this.model.position.set(this.position.x, this.position.y, this.position.z); // this.model.lookAt( this.velocity.clone().normalize() );
 
       this.model.rotation.y = Math.atan2(-this.velocity.z, this.velocity.x);
@@ -31141,7 +31679,7 @@ function (_AgentAbstruct) {
   }, {
     key: "_ruleSeparation",
     value: function _ruleSeparation() {
-      var _this3 = this;
+      var _this4 = this;
 
       var virtualBoids = _BirdManager__WEBPACK_IMPORTED_MODULE_5__["birdManager"].getVirtualBoidsOnWall(this);
       var boidsInFOV = _BirdManager__WEBPACK_IMPORTED_MODULE_5__["birdManager"].getOtherBoidsPosInFOV(this);
@@ -31154,7 +31692,7 @@ function (_AgentAbstruct) {
 
       var vec = new three__WEBPACK_IMPORTED_MODULE_0__["Vector3"](0, 0, 0);
       objects.forEach(function (obj) {
-        var diff = obj.position.clone().sub(_this3.position);
+        var diff = obj.position.clone().sub(_this4.position);
         var scalar = 10.0 / (diff.length() * diff.length());
         vec.add(diff.normalize().negate().multiplyScalar(scalar));
       });
@@ -31316,7 +31854,10 @@ function () {
 
   }, {
     key: "update",
-    value: function update() {} // Agentを追加
+    value: function update(dt) {} // for( let agent of this.agentList ) {
+    //   agent.update(dt);
+    // }
+    // Agentを追加
 
   }, {
     key: "addAgent",
@@ -31420,14 +31961,21 @@ var birdManager = new BirdManager();
 
 "use strict";
 __webpack_require__.r(__webpack_exports__);
+/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "default", function() { return BirdModel; });
 /* harmony import */ var three__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! three */ "./node_modules/three/build/three.module.js");
 /* harmony import */ var GLTFLoader__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! GLTFLoader */ "./node_modules/three/examples/js/loaders/GLTFLoader.js");
 /* harmony import */ var GLTFLoader__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(GLTFLoader__WEBPACK_IMPORTED_MODULE_1__);
+/* harmony import */ var DRACOLoader__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! DRACOLoader */ "./node_modules/three/examples/js/loaders/DRACOLoader.js");
+/* harmony import */ var DRACOLoader__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(DRACOLoader__WEBPACK_IMPORTED_MODULE_2__);
+/* harmony import */ var lodash_Object__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! lodash/Object */ "./node_modules/lodash/Object.js");
+/* harmony import */ var lodash_Object__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(lodash_Object__WEBPACK_IMPORTED_MODULE_3__);
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
 
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+
 
 
 
@@ -31440,6 +31988,7 @@ function () {
 
     this.model = new three__WEBPACK_IMPORTED_MODULE_0__["Object3D"]();
     this.anim = null;
+    three__WEBPACK_IMPORTED_MODULE_0__["DRACOLoader"].setDecoderPath('libs/draco/gltf/');
   }
 
   _createClass(BirdModel, [{
@@ -31449,10 +31998,14 @@ function () {
 
       return new Promise(function (resolve, reject) {
         var loader = new three__WEBPACK_IMPORTED_MODULE_0__["GLTFLoader"]();
-        loader.load('./model/bird.glb', function (data) {
-          var gltf = data;
-          _this.model = gltf.scene;
-          _this.anim = gltf.animations;
+        loader.setDRACOLoader(new three__WEBPACK_IMPORTED_MODULE_0__["DRACOLoader"]());
+        loader.load('./model/bird2anim.glb', function (gltf) {
+          // console.log(gltf);
+          _this.model = gltf.scene; // this.model.traverse((node) => {
+          //   if ( node.isMesh || node.isLight ) node.castShadow = true;
+          // });
+
+          _this.clips = gltf.animations;
           resolve();
         }, function (xhr) {
           console.log(xhr.loaded / xhr.total * 100 + '% loaded.');
@@ -31465,19 +32018,21 @@ function () {
   }, {
     key: "getModel",
     value: function getModel() {
-      return this.model.clone();
+      return this.model;
     }
   }, {
     key: "getAnimation",
     value: function getAnimation() {
-      return this.anim;
+      var index = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 0;
+      return this.clips[index];
     }
   }]);
 
   return BirdModel;
-}();
+}(); // export default new BirdModel;
 
-/* harmony default export */ __webpack_exports__["default"] = (new BirdModel());
+
+
 
 /***/ }),
 
@@ -31627,7 +32182,7 @@ function (_EventEmitter) {
       // レンダラーを作成
 
       this.renderer = new three__WEBPACK_IMPORTED_MODULE_0__["WebGLRenderer"]({
-        canvas: document.querySelector('#canvas'),
+        canvas: document.getElementById('canvas'),
         antialias: true
       });
       this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -31640,10 +32195,13 @@ function (_EventEmitter) {
       document.body.appendChild(this.renderer.domElement);
       document.body.appendChild(_WebVR__WEBPACK_IMPORTED_MODULE_2__["default"].createButton(this.renderer));
       this.renderer.setAnimationLoop(function () {
-        return _this.tick();
+        return _this.animate();
       });
       this.beginTime = (performance || Date).now();
-      this.frames = 0;
+      this.prevTime = 0;
+      this.frames = 0; // this.animate = this.animate.bind(this);
+      // requestAnimationFrame( this.animate );
+
       window.addEventListener('resize', function () {
         return _this._onResize();
       }, false); // 光源の作成
@@ -31670,9 +32228,11 @@ function (_EventEmitter) {
       this.scene.add(this.gui);
     }
   }, {
-    key: "tick",
-    value: function tick() {
+    key: "animate",
+    value: function animate(aTime) {
+      // requestAnimationFrame( this.animate );
       this.frames++;
+      var dt = (aTime - this.prevTime) / 1000;
       var time = (performance || Date).now();
 
       if (time >= this.beginTime + 1000) {
@@ -31681,7 +32241,8 @@ function (_EventEmitter) {
         this.frames = 0;
       }
 
-      this.emit('update');
+      this.emit('update'); // birdManager.update(dt);
+
       this.status.num = _BirdManager__WEBPACK_IMPORTED_MODULE_4__["birdManager"].getCount();
       this.renderer.render(this.scene, this.camera);
     }

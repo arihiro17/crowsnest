@@ -28,7 +28,7 @@ class SceneManager extends EventEmitter {
 
     // レンダラーを作成
     this.renderer = new THREE.WebGLRenderer({
-      canvas: document.querySelector('#canvas'),
+      canvas: document.getElementById('canvas'),
       antialias: true
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -41,9 +41,12 @@ class SceneManager extends EventEmitter {
 
     document.body.appendChild(this.renderer.domElement);
     document.body.appendChild(WEBVR.createButton(this.renderer));
-    this.renderer.setAnimationLoop( () => this.tick() );
+    this.renderer.setAnimationLoop( () => this.animate() );
     this.beginTime = ( performance || Date ).now();
+    this.prevTime = 0;
     this.frames = 0;
+    // this.animate = this.animate.bind(this);
+    // requestAnimationFrame( this.animate );
 
     window.addEventListener('resize', () => this._onResize(), false);
 
@@ -73,8 +76,10 @@ class SceneManager extends EventEmitter {
 
   }
 
-  tick() {
+  animate(aTime) {
+    // requestAnimationFrame( this.animate );
     this.frames++;
+    const dt = (aTime - this.prevTime) / 1000;
     let time = (performance || Date).now();
     if (time >= this.beginTime + 1000) {
       this.status.fps = (this.frames * 1000) / (time - this.beginTime);
@@ -83,6 +88,7 @@ class SceneManager extends EventEmitter {
     }
 
     this.emit('update');
+    // birdManager.update(dt);
     this.status.num = birdManager.getCount();
     this.renderer.render(this.scene, this.camera);
   }

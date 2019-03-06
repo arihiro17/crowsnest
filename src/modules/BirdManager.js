@@ -28,13 +28,18 @@ class BirdManager {
 
   init() {
     setInterval(() => {
-      if (this.agentList.length < 100) this.addAgent();
-    }, 1000 / 2);
+      // FPS60以上ならエージェント追加
+      if (SceneManager.state.fps >= 60) {
+        this.addAgent()
+      }
+    }, 1000);
   }
 
   // 更新
-  update() {
-
+  update(dt) {
+    // for( let agent of this.agentList ) {
+    //   agent.update(dt);
+    // }
   }
 
   // Agentを追加

@@ -5,20 +5,23 @@ import {randomRange, clamp} from './Util';
 import SceneManager from './SceneManager';
 import {birdManager, VirtualBoid} from './BirdManager';
 import BirdModel from './BirdModel';
-import AgentAbstruct from './AgentAbstruct';
+import AgentObject from './AgentAbstruct';
 
 const RULE_SEPARATION_FACTOR = 9.0;
 const RULE_ALIGNMENT_FACTOR = 0.5;
 const RULE_COHESION_FACTOR = 0.5;
 
 // 単一のAgent
-export default class BirdAgent extends AgentAbstruct {
+export default class BirdAgent extends AgentObject {
   constructor() {
     // 位置をランダムで決める
     super(new THREE.Vector3( randomRange(AREA_RANGE.MIN_X, AREA_RANGE.MAX_X), randomRange(AREA_RANGE.MIN_Y, AREA_RANGE.MAX_Y), randomRange(AREA_RANGE.MIN_Z, AREA_RANGE.MAX_Z) ));
 
     this.model = null;
     this.mixer = null;
+    this.clip = null;
+
+    this.setupComplete = false;
 
     // 加速度
     this.acceleration = new THREE.Vector3(0, 0, 0);
@@ -28,35 +31,48 @@ export default class BirdAgent extends AgentAbstruct {
   }
 
   setup() {
-    const birdModel = BirdModel.getModel();
-    birdModel.rotation.set(0, Math.PI / 2, 0);
-    birdModel.scale.set(0.08, 0.08, 0.08);
-    this.model = new THREE.Object3D();
-    this.model.add(birdModel);
+    // const birdModel = BirdModel.getModel();
 
-    // this.animation = BirdModel.getAnimation();
-    // if (this.animation && this.animations.length) {
-    //   let mixer = new THREE.AnimationMixer(birdModel);
-    //   for (let cnt = 0; cnt < this.animations.length; cnt++) {
-    //     let animation = this.animations[cnt];
-    //     let action = mixer.clipAction(animation);
-    //
-    //     if (state.playAnimation) action.play();
-    //   }
-    // }
-    // if (this.animation && this.animation.length) {
-    //   const meshes = this.getMesh(birdModel);
-    //   this.mixer = new THREE.AnimationMixer(birdModel);
-    //   for (let cnt = 0; cnt < this.animation.length; cnt++) {
-    //     this.mixer.clipAction( this.animation[cnt] ).play();
-    //   }
-    // }
+    const birdloader = new BirdModel();
+    birdloader.load().then(() => {
+      const birdModel = birdloader.getModel();
 
-    SceneManager.addScene(this.model);
+      birdModel.rotation.set(0, Math.PI / 2, 0);
+      birdModel.scale.set(0.08, 0.08, 0.08);
+      this.model = new THREE.Object3D();
+      this.model.add(birdModel);
 
-    this._updatePosRot();
-    this.clock = new THREE.Clock();
-    SceneManager.on('update', this.onUpdate);
+      this.mixer = new THREE.AnimationMixer(birdModel);
+      // let clip = BirdModel.getAnimation();
+      let clip = birdloader.getAnimation();
+      let action = this.mixer.clipAction(clip);
+
+      action.play();
+
+      if (this.mixer) {
+        this.mixer.stopAllAction();
+        this.mixer.uncacheRoot(this.mixer.getRoot());
+        this.mixer = null;
+      }
+
+      if (clip) {
+        if (clip.validate()) clip.optimize();
+
+        this.clip = clip;
+
+        this.mixer = new THREE.AnimationMixer(birdModel);
+        this.mixer.clipAction(clip).play();
+      }
+
+      SceneManager.addScene(this.model);
+
+
+      this._updatePosRot();
+      this.clock = new THREE.Clock();
+
+      // this.setupComplete = true;
+      SceneManager.on('update', this.onUpdate);
+    }, null);
   }
 
   // 更新
@@ -66,6 +82,8 @@ export default class BirdAgent extends AgentAbstruct {
       // let dt = (time - this.time) / 1000;
       let dt = this.clock.getDelta();
       // this.time = time;
+
+      // if (!this.setupComplete) return;
 
       let dPos = this.velocity.clone().multiplyScalar( dt ).add( this.acceleration.clone().multiplyScalar( dt * dt * 0.5 ) );
       this.velocity.add( this.acceleration.clone().multiplyScalar( dt ) );
@@ -84,11 +102,12 @@ export default class BirdAgent extends AgentAbstruct {
 
       this._updatePosRot();
 
-      // this.mixer.update(dt);
+      this.mixer && this.mixer.update(dt);
     }
   }
 
   _updatePosRot() {
+    console.log(this.model);
     this.model.position.set(this.position.x, this.position.y, this.position.z);
     // this.model.lookAt( this.velocity.clone().normalize() );
     this.model.rotation.y = Math.atan2( - this.velocity.z, this.velocity.x );

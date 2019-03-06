@@ -19,7 +19,8 @@ module.exports = {
   resolve: {
     extensions: ['.js', '.jsx'],
     alias: {
-      GLTFLoader: 'three/examples/js/loaders/GLTFLoader.js'
+      GLTFLoader: 'three/examples/js/loaders/GLTFLoader.js',
+      DRACOLoader: 'three/examples/js/loaders/DRACOLoader'
     }
   },
   plugins: [
